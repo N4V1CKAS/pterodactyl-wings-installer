@@ -17,7 +17,7 @@ echo "2) Wings Daemon"
 echo
 read -p "Enter your choice [1-2]: " choice
 
-# Variable initialization 
+# Variable initialization
 DOMAIN=""
 EMAIL=""
 DB_NAME=""
@@ -25,13 +25,14 @@ DB_USER=""
 DB_PASS=""
 FRESH_INSTALL=""
 SETUP_MAIL=""
+PTERO_DIR="/var/www/pterodactyl"
 
 # Pterodactyl Panel User Settings
 if [[ $choice == "1" ]]; then
 	clear
 	echo "=== Pterodactyl Panel Configuration ==="
 	echo
-	
+
 	# Domain input
 	while true; do
 		read -p "Enter your domain (e.g. panel.example.com): " DOMAIN
@@ -104,11 +105,9 @@ case $choice in
 
 		sudo apt update
 
-		# PHP, MariaDB, Nginx, Redis and other intallation of stuff!
-		sudo apt -y install php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip} mariadb-server nginx tar unzip git redis-server
-
-		# Composer
-		curl -sS https://getcomposer.org/installer | sudo php -- --install-dir=/usr/local/bin --filename=composer
+		# PHP, MariaDB, Nginx, Redis and other installation of dependencies!
+		sudo apt -y install php8.3 php8.3-{common,cli,gd,mysql,mbstring,bcmath,xml,fpm,curl,zip,intl} mariadb-server nginx tar unzip git redis-server
+		sudo apt -y install composer
 
 		# Download and extract!
 		mkdir -p /var/www/pterodactyl
@@ -116,29 +115,48 @@ case $choice in
 
 		curl -Lo panel.tar.gz https://github.com/pterodactyl/panel/releases/latest/download/panel.tar.gz
 		tar -xzvf panel.tar.gz
-		sudo chmod -R 755 storage/* bootstrap/cache/
 
 		#MariaDB config
 		echo "Creating MariaDB database and user..."
 		sudo mariadb <<EOF
 		CREATE DATABASE IF NOT EXISTS \`$DB_NAME\`;
-		CREATE USER IF NOT EXISTS \`$DB_USER\`@'127.0.0.1' IDENTIFIED BY '$DB_PASS';
-		CREATE USER IF NOT EXISTS \`$DB_USER\`@'localhost' IDENTIFIED BY '$DB_PASS';
+		CREATE USER IF NOT EXISTS '$DB_USER'@'127.0.0.1' IDENTIFIED BY '$DB_PASS';
+		CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
 		GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'127.0.0.1';
 		GRANT ALL PRIVILEGES ON \`$DB_NAME\`.* TO '$DB_USER'@'localhost';
+		ALTER USER '$DB_USER'@'127.0.0.1' IDENTIFIED BY '$DB_PASS';
+		ALTER USER '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASS';
 		FLUSH PRIVILEGES;
+
 EOF
 
 
 		# Copy env files and apply DB settings
-		cp .env.example .env
+		if [ ! -f .env ]; then
+    			cp .env.example .env
+		fi
+
+		cd /var/www/pterodactyl || exit 1
+
+		# Fix storage and bootstrap/cache permission stuff
+		echo "Setting proper permissions for storage and bootstrap/cache..."
+
+		# Making sure storage and bootstrap/cache exist
+		sudo mkdir -p "$PTERO_DIR/storage/logs" "$PTERO_DIR/bootstrap/cache" "$PTERO_DIR/vendor"
+		sudo chown -R www-data:www-data "$PTERO_DIR/storage" "$PTERO_DIR/bootstrap/cache" "$PTERO_DIR/vendor"
+
+		sudo find "$PTERO_DIR/storage" "$PTERO_DIR/bootstrap/cache" "$PTERO_DIR/vendor" -type d -exec chmod 775 {} \;
+		sudo find "$PTERO_DIR/storage" "$PTERO_DIR/bootstrap/cache" "$PTERO_DIR/vendor" -type f -exec chmod 664 {} \;
 
 		sed -i "s/^DB_DATABASE=.*/DB_DATABASE=$DB_NAME/" .env
 		sed -i "s/^DB_USERNAME=.*/DB_USERNAME=$DB_USER/" .env
 		sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD='$DB_PASS'/" .env
 
-		# Install PHP dependencies
-		COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
+		sudo chown www-data:www-data "$PTERO_DIR/.env"
+		sudo chmod 664 "$PTERO_DIR/.env"
+
+		# Composer
+		sudo -u www-data COMPOSER_ALLOW_SUPERUSER=1 composer install --no-dev --optimize-autoloader
 
 		# Pterodactyl panel post install configuration stuff :P
 		# Fresh install?!?
@@ -160,10 +178,15 @@ EOF
 		# Run fresh install settings if you picked y/yes 
 		if [[ $FRESH_INSTALL == true ]]; then
 			echo "First time setup in progress..."
-			php artisan key:generate --force
-			php artisan migrate --seed --force
-			php artisan p:user:make
+			sudo -u www-data php artisan key:generate --force
+			sudo -u www-data php artisan migrate --seed --force
+			sudo -u www-data php artisan p:user:make
 		fi
+
+		# Clear Laravel crashes
+		sudo -u www-data php artisan config:clear
+		sudo -u www-data php artisan cache:clear
+		sudo -u www-data php artisan view:clear
 
 		#Optional SMTP email setup!!
 		clear
@@ -172,7 +195,7 @@ EOF
 			case "${SETUP_MAIL,,}" in
 				y|yes)
 					echo "Starting the mail setup"
-					php artisan p:environment:mail
+					sudo -u www-data php artisan p:environment:mail
 					break
 					;;
 				n|no)
@@ -185,33 +208,79 @@ EOF
 
 		# Scheduled task runner
 		echo "Installing Crontab..."
-		(crontab -l 2>/dev/null; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1") | crontab -
+		set +e
+		sudo -u www-data crontab -l 2>/dev/null | { cat; echo "* * * * * php /var/www/pterodactyl/artisan schedule:run >> /dev/null 2>&1"; } | sudo -u www-data crontab -
+		set -e
+
+
+		# Testing scheduler real quick!
+		echo "Testing Laravel scheduler..."
+		sudo -u www-data php "$PTERO_DIR/artisan" schedule:run
 
 		# Create systemd service for queue worker...
 		echo "Installing queue worker service..."
-		sudo tee /etc/systemd/system/pteroq.service > /dev/null <<EOF
+sudo tee /etc/systemd/system/pteroq.service > /dev/null <<EOF
 
-		[Unit]
-		Description=Pterodactyl Queue Worker
-		After=network.target
+[Unit]
+Description=Pterodactyl Queue Worker
+After=network.target
 
-		[Service]
-		User=www-data
-		Group=www-data
-		Restart=always
-		ExecStart=/usr/bin/php /var/www/pterodactyl/artisan queue:work --sleep=5 --tries=3 --queue=high,standard,low
-		WorkingDirectory=/var/www/pterodactyl
-		RestartSec=5
+[Service]
+User=www-data
+Group=www-data
+Restart=always
+ExecStart=/usr/bin/php /var/www/pterodactyl/artisan queue:work --sleep=5 --tries=3 --queue=high,standard,low
+WorkingDirectory=/var/www/pterodactyl
+RestartSec=5
 
-		[Install]
-		WantedBy=multi-user.target
+[Install]
+WantedBy=multi-user.target
+
 EOF
+
 
 		sudo systemctl daemon-reload
 		sudo systemctl enable --now pteroq.service
+		sudo systemctl enable --now php8.3-fpm
 
-		# Fix permissions
-		sudo chown -R www-data:www-data /var/www/pterodactyl
+		echo "Configuring Nginx..."
+		NGINX_CONF="/etc/nginx/sites-available/pterodactyl.conf"
+
+		sudo tee "$NGINX_CONF" > /dev/null <<-EOF
+		server {
+			listen 80;
+			server_name $DOMAIN;
+
+			root /var/www/pterodactyl/public;
+			index index.php index.html;
+
+			client_max_body_size 100m;
+
+			location / {
+				try_files \$uri \$uri/ /index.php?\$query_string;
+			}
+
+			location ~ \.php\$ {
+				include snippets/fastcgi-php.conf;
+				fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+			}
+		}
+EOF
+
+
+		# Enable the page
+		sudo ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/pterodactyl.conf
+		sudo rm -f /etc/nginx/sites-enabled/default
+
+		# Test nginx BEFORE reload
+		echo "Testing Nginx configuration..."
+		if sudo nginx -t; then
+    			sudo systemctl reload nginx
+    			echo "Nginx reloaded successfully."
+		else
+    			echo "Nginx config test FAILED. Aborting installation..."
+    		exit 2
+		fi
 		;;
 	2)
 		echo "Installing Wings daemon..."
@@ -219,7 +288,7 @@ EOF
 		# Create config directory and download the correct Wings binary
 		sudo mkdir -p /etc/pterodactyl
 		sudo curl -L -o /usr/local/bin/wings "https://github.com/pterodactyl/wings/releases/latest/download/wings_linux_$([[ "$(uname -m)" == "x86_64" ]] && echo "amd64" || echo "arm64")"
-		
+
 		# Make Wings executable
 		sudo chmod u+x /usr/local/bin/wings
 
@@ -262,9 +331,6 @@ echo
 echo "==============================================="
 echo "	    Made by Danielius Navickas"
 echo "==============================================="
-
-
-
 
 
 
