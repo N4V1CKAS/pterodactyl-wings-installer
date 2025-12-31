@@ -1,23 +1,34 @@
-# Pterodactyl + Wings Easy Installer
-An interactive Bash script to automate the installation of Pterodactyl Panel and Wings daemon on Ubuntu.
+# 🐉 Pterodactyl + Wings Easy Installer
+An interactive Bash script to automate the installation of Pterodactyl Panel and Wings daemon on Ubuntu, saving hours of manual setup.
 
-This project was created as my first real deep dive into Bash scripting. The goal was simple, to automate a setup process that normally takes me a significant amount of time when done manually, while also learning how Bash behaves in real world server scenarios. The script went through multiple iterations and fixes as I tested it on fresh VMs and resolved issues along the way.
+## 🛠️ Technologies
+- Bash scripting
+- Core Linux tools and package managers `apt, curl, systemd`
 
-## Features
-- Interactive menu (Panel or Wings)
-- Automated dependency installation
-- MariaDB database setup
-- Pterodactyl Panel configuration
-- Crontab and queue worker setup
-- Automatic Wings binary detection (amd64 / arm64)
+## 🚀 Features
+- Interactive menu to choose Panel or Wings installation
+- Automatic dependency installation
+- MariaDB database setup (Panel)
+- Pterodactyl Panel configuration, crontab and queue workers
+- Safe checks and user prompts throughout
 
-## Requirements
-- Ubuntu Server 24.04 (tested, could work on previous versions)
-- Fresh VM or VPS recommended
-- User with sudo privileges
+## 💡 Why I built it
+This was my first deep dive into Bash scripting and a practical way to automate a real-world server task I repeat:
+- Learning how Bash works in real server setups
+- Building an interactive menu that's easy to follow
+- Installing dependencies and configuring services step by step
+- Testing everything on fresh VMs to fix issues as they came up
 
-## Notes
-- This was my **first ever Bash script** and took a lot of time to build through trial, error and testing.
-- A **small portion** of the script (initial menu structure and random password generation) was assisted by AI.
-- The remaining script was implemented by reading official documentation, testing on fresh VMs and fixing issues as they appeared.
-- **Wings will NOT start** until a valid config.yml file is placed at: /etc/pterodactyl/
+## ⚠️ Requirements & Notes
+- Ubuntu Server 24.04 (tested, may work on earlier versions)
+- Fresh VM/VPS recommended
+- User with sudo privileges required
+- Wings will **not** start until a valid `config.yml` is placed at `/etc/pterodactyl/`
+
+> Note: This was my first Bash script, built through trial, error and testing on fresh VMs. A small portion (initial menu and password generation) was assisted by AI, however the rest was implemented by reading official documentation and fixing issues as they appeared.
+
+## 📦 Usage
+1. Clone the repository
+2. Make the script executable: `chmod +x installer.sh`
+3. Run the script: `sudo ./installer.sh`
+4. Follow the interactive menu
